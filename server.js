@@ -4,347 +4,156 @@ const cors = require("cors");
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: "20mb" }));
+app.use(express.json({ limit: "30mb" }));
 
 const PORT = process.env.PORT || 10000;
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const POLLINATIONS_API_KEY = process.env.POLLINATIONS_API_KEY;
+const OPENROUTER_API_KEY =
+  process.env.OPENROUTER_API_KEY;
 
+// ================================
+// MODELS
+// ================================
+
+// Free chat + vision router
 const CHAT_MODEL =
-  process.env.GEMINI_MODEL || "gemini-3.6-flash";
+  process.env.OPENROUTER_CHAT_MODEL ||
+  "openrouter/free";
 
+// Image generation
 const IMAGE_MODEL =
-  process.env.POLLINATIONS_IMAGE_MODEL || "flux";
+  process.env.OPENROUTER_IMAGE_MODEL ||
+  "google/gemini-3.1-flash-image-preview";
 
+// Video generation
 const VIDEO_MODEL =
-  process.env.POLLINATIONS_VIDEO_MODEL || "veo";
+  process.env.OPENROUTER_VIDEO_MODEL ||
+  "google/veo-3.1-lite:free";
 
-// ==================================================
+// Text to speech
+const TTS_MODEL =
+  process.env.OPENROUTER_TTS_MODEL ||
+  "fish-audio/s2.1-pro:free";
+
+// Speech to text
+const STT_MODEL =
+  process.env.OPENROUTER_STT_MODEL ||
+  "openai/whisper-large-v3-turbo";
+
+const BASE_URL =
+  "https://openrouter.ai/api/v1";
+
+// ================================
+// BASIC HELPERS
+// ================================
+
+function checkKey() {
+  if (!OPENROUTER_API_KEY) {
+    throw new Error(
+      "OPENROUTER_API_KEY is not configured"
+    );
+  }
+}
+
+async function openRouterRequest(
+  path,
+  options = {}
+) {
+  checkKey();
+
+  const response = await fetch(
+    `${BASE_URL}${path}`,
+    {
+      ...options,
+
+      headers: {
+        Authorization:
+          `Bearer ${OPENROUTER_API_KEY}`,
+
+        "Content-Type":
+          "application/json",
+
+        "HTTP-Referer":
+          process.env.APP_URL ||
+          "https://ai-companion-backend-2.onrender.com",
+
+        "X-Title":
+          "AI Companion",
+
+        ...(options.headers || {})
+      }
+    }
+  );
+
+  const text = await response.text();
+
+  let data;
+
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = {
+      raw: text
+    };
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      data?.error?.message ||
+      data?.message ||
+      data?.raw ||
+      `OpenRouter error ${response.status}`
+    );
+  }
+
+  return {
+    response,
+    data
+  };
+}
+
+// ================================
 // HOME
-// ==================================================
+// ================================
 
 app.get("/", (req, res) => {
   res.json({
     ok: true,
     name: "AI Companion Backend",
-    status: "online",
 
     endpoints: {
-      chat: "/api/chat",
-      image: "/api/image",
-      video: "/api/video"
+      health: "/health",
+      chat: "POST /api/chat",
+      image: "POST /api/image",
+      video: "POST /api/video",
+      videoStatus: "GET /api/video/status/:id",
+      videoContent: "GET /api/video/content/:id",
+      tts: "POST /api/tts",
+      stt: "POST /api/stt"
     },
 
-    services: {
-      chat: !!GEMINI_API_KEY,
-      image: !!POLLINATIONS_API_KEY,
-      video: !!POLLINATIONS_API_KEY
-    }
+    openrouter: !!OPENROUTER_API_KEY
   });
 });
 
-// ==================================================
-// GEMINI CHAT
-// ==================================================
+// ================================
+// HEALTH
+// ================================
 
-async function geminiChat(contents) {
-
-  if (!GEMINI_API_KEY) {
-    throw new Error(
-      "GEMINI_API_KEY is not configured"
-    );
-  }
-
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${CHAT_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-
-  const response = await fetch(url, {
-
-    method: "POST",
-
-    headers: {
-      "Content-Type": "application/json"
-    },
-
-    body: JSON.stringify({
-
-      contents,
-
-      generationConfig: {
-        temperature: 0.8,
-        maxOutputTokens: 1024
-      }
-
-    })
-
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    backend: "online",
+    openrouter:
+      !!OPENROUTER_API_KEY
   });
+});
 
-  const data = await response.json();
-
-  if (!response.ok) {
-
-    throw new Error(
-      data?.error?.message ||
-      "Gemini request failed"
-    );
-
-  }
-
-  return data;
-}
-
-// ==================================================
-// POLLINATIONS IMAGE
-// ==================================================
-
-async function generateImage(prompt) {
-
-  if (!POLLINATIONS_API_KEY) {
-
-    throw new Error(
-      "POLLINATIONS_API_KEY is not configured"
-    );
-
-  }
-
-  const encodedPrompt =
-    encodeURIComponent(prompt);
-
-  const url =
-    `https://gen.pollinations.ai/image/${encodedPrompt}?model=${encodeURIComponent(IMAGE_MODEL)}&width=1024&height=1024&nologo=true`;
-
-  console.log(
-    "Generating image with Pollinations..."
-  );
-
-  const response = await fetch(url, {
-
-    method: "GET",
-
-    headers: {
-      "Authorization":
-        `Bearer ${POLLINATIONS_API_KEY}`
-    }
-
-  });
-
-  if (!response.ok) {
-
-    const errorText =
-      await response.text();
-
-    console.error(
-      "POLLINATIONS IMAGE ERROR:",
-      errorText
-    );
-
-    throw new Error(
-      `Image generation failed: ${response.status} ${errorText}`
-    );
-
-  }
-
-  const contentType =
-    response.headers.get("content-type") ||
-    "image/png";
-
-  const arrayBuffer =
-    await response.arrayBuffer();
-
-  const base64 =
-    Buffer
-      .from(arrayBuffer)
-      .toString("base64");
-
-  return {
-
-    mimeType: contentType,
-
-    base64,
-
-    dataUrl:
-      `data:${contentType};base64,${base64}`
-
-  };
-
-}
-
-// ==================================================
-// POLLINATIONS VIDEO
-// ==================================================
-
-async function generateVideo(prompt) {
-
-  if (!POLLINATIONS_API_KEY) {
-
-    throw new Error(
-      "POLLINATIONS_API_KEY is not configured"
-    );
-
-  }
-
-  const encodedPrompt =
-    encodeURIComponent(prompt);
-
-  const url =
-    `https://gen.pollinations.ai/video/${encodedPrompt}?model=${encodeURIComponent(VIDEO_MODEL)}&duration=4`;
-
-  console.log(
-    "Generating video with Pollinations..."
-  );
-
-  const response = await fetch(url, {
-
-    method: "GET",
-
-    headers: {
-      "Authorization":
-        `Bearer ${POLLINATIONS_API_KEY}`
-    }
-
-  });
-
-  if (!response.ok) {
-
-    const errorText =
-      await response.text();
-
-    console.error(
-      "POLLINATIONS VIDEO ERROR:",
-      errorText
-    );
-
-    throw new Error(
-      `Video generation failed: ${response.status} ${errorText}`
-    );
-
-  }
-
-  const contentType =
-    response.headers.get("content-type") ||
-    "video/mp4";
-
-  const arrayBuffer =
-    await response.arrayBuffer();
-
-  const base64 =
-    Buffer
-      .from(arrayBuffer)
-      .toString("base64");
-
-  return {
-
-    mimeType: contentType,
-
-    base64,
-
-    dataUrl:
-      `data:${contentType};base64,${base64}`
-
-  };
-
-}
-
-// ==================================================
-// IMAGE REQUEST DETECTOR
-// ==================================================
-
-function isImageRequest(message) {
-
-  if (!message) return false;
-
-  const text =
-    message.toLowerCase();
-
-  const keywords = [
-
-    "photo banao",
-    "pic banao",
-    "image banao",
-    "photo bana",
-    "pic bana",
-    "image bana",
-
-    "photo bana do",
-    "pic bana do",
-    "image bana do",
-
-    "photo generate",
-    "pic generate",
-    "image generate",
-
-    "generate image",
-    "generate photo",
-
-    "create image",
-    "create photo",
-
-    "make image",
-    "make photo",
-
-    "picture of",
-    "image of",
-    "photo of",
-
-    "tasveer banao",
-    "tasvir banao",
-    "tasveer bana",
-    "tasvir bana"
-
-  ];
-
-  return keywords.some(
-    keyword => text.includes(keyword)
-  );
-}
-
-// ==================================================
-// VIDEO REQUEST DETECTOR
-// ==================================================
-
-function isVideoRequest(message) {
-
-  if (!message) return false;
-
-  const text =
-    message.toLowerCase();
-
-  const keywords = [
-
-    "video banao",
-    "video bana",
-    "video bana do",
-    "video generate",
-    "video generate karo",
-
-    "create video",
-    "create a video",
-
-    "make video",
-    "make a video",
-
-    "generate video",
-
-    "animation banao",
-    "animated video",
-
-    "clip banao",
-    "reel banao"
-
-  ];
-
-  return keywords.some(
-    keyword => text.includes(keyword)
-  );
-}
-
-// ==================================================
+// ================================
 // CHAT
-// ==================================================
+// ================================
 
 app.post("/api/chat", async (req, res) => {
-
   try {
 
     const {
@@ -354,350 +163,703 @@ app.post("/api/chat", async (req, res) => {
     } = req.body;
 
     if (!message && !image) {
-
       return res.status(400).json({
-
         success: false,
-
         error:
           "Message or image is required"
-
       });
-
     }
 
-    // ==================================================
-    // VIDEO REQUEST
-    // ==================================================
+    const messages = [];
 
-    if (
-      message &&
-      isVideoRequest(message)
-    ) {
+    // SYSTEM
+    messages.push({
+      role: "system",
 
-      console.log(
-        "VIDEO REQUEST:",
-        message
-      );
+      content: `
+You are My AI Companion.
 
-      const video =
-        await generateVideo(message);
+Personality:
+- Friendly
+- Warm
+- Natural
+- Helpful
+- Conversational
+- Can understand Hindi
+- Can understand Hinglish
+- Can understand English
+- Reply naturally in the language used by the user.
 
-      return res.json({
+IMPORTANT:
+If the user asks to create an image, do not pretend an image was created.
+The application has a separate image generation endpoint.
 
-        success: true,
+If the user asks for a video, do not pretend a video was created.
+The application has a separate video generation endpoint.
 
-        type: "video",
+Never claim that you generated a real image or video unless the application actually generated it.
 
-        reply:
-          "Ye rahi aapki video 🎬",
+Keep normal replies reasonably concise.
+`
+    });
 
-        video
-
-      });
-
-    }
-
-    // ==================================================
-    // IMAGE REQUEST
-    // ==================================================
-
-    if (
-      message &&
-      isImageRequest(message)
-    ) {
-
-      console.log(
-        "IMAGE REQUEST:",
-        message
-      );
-
-      const generatedImage =
-        await generateImage(message);
-
-      return res.json({
-
-        success: true,
-
-        type: "image",
-
-        reply:
-          "Ye rahi aapki image 😊",
-
-        image:
-          generatedImage
-
-      });
-
-    }
-
-    // ==================================================
-    // NORMAL CHAT
-    // ==================================================
-
-    const contents = [];
-
-    // Conversation memory
+    // MEMORY / HISTORY
     if (Array.isArray(history)) {
 
       for (const item of history) {
 
-        if (!item?.text) continue;
+        if (!item) continue;
 
-        contents.push({
+        const text =
+          item.text ||
+          item.content ||
+          "";
 
+        if (!text) continue;
+
+        messages.push({
           role:
             item.role === "user"
               ? "user"
-              : "model",
+              : "assistant",
 
-          parts: [
-
-            {
-              text: item.text
-            }
-
-          ]
-
+          content: text
         });
-
       }
-
     }
 
-    const parts = [];
+    // CURRENT MESSAGE
+    const content = [];
 
     if (message) {
 
-      parts.push({
-
-        text: `
-You are a friendly AI Companion.
-
-Personality:
-- Warm
-- Friendly
-- Natural
-- Helpful
-- Hindi, Hinglish and English
-- Conversational
-- Do not falsely claim that you generated an image or video.
-
-User message:
-${message}
-`
-
+      content.push({
+        type: "text",
+        text: message
       });
 
     }
 
-    // Uploaded image
+    // IMAGE UNDERSTANDING
     if (
       image &&
       image.data &&
       image.mimeType
     ) {
 
-      parts.push({
+      const dataUrl =
+        `data:${image.mimeType};base64,${image.data}`;
 
-        inline_data: {
+      content.push({
+        type: "image_url",
 
-          mime_type:
-            image.mimeType,
-
-          data:
-            image.data
-
+        image_url: {
+          url: dataUrl
         }
-
       });
-
     }
 
-    contents.push({
-
+    messages.push({
       role: "user",
-
-      parts
-
+      content
     });
 
-    const data =
-      await geminiChat(contents);
+    const result =
+      await openRouterRequest(
+        "/chat/completions",
+        {
+          method: "POST",
 
-    const reply =
-      data?.candidates?.[0]
-        ?.content?.parts
-        ?.map(
-          part => part.text || ""
-        )
-        .join("")
-        .trim();
+          body: JSON.stringify({
+            model: CHAT_MODEL,
 
-    if (!reply) {
+            messages,
 
-      throw new Error(
-        "Gemini returned empty response"
+            temperature: 0.8,
+
+            max_tokens: 1000
+          })
+        }
       );
 
+    const reply =
+      result.data
+        ?.choices?.[0]
+        ?.message?.content;
+
+    if (!reply) {
+      throw new Error(
+        "AI returned an empty response"
+      );
     }
 
-    return res.json({
-
+    res.json({
       success: true,
-
-      type: "text",
-
-      reply
-
+      reply,
+      model:
+        result.data?.model ||
+        CHAT_MODEL
     });
 
-  }
-
-  catch (error) {
+  } catch (error) {
 
     console.error(
       "CHAT ERROR:",
       error
     );
 
-    return res.status(500).json({
-
+    res.status(500).json({
       success: false,
-
-      error:
-        error.message ||
-        "Server error"
-
+      error: error.message
     });
-
   }
-
 });
 
-// ==================================================
-// DIRECT IMAGE ENDPOINT
-// ==================================================
+// ================================
+// TEXT → IMAGE
+// ================================
 
 app.post("/api/image", async (req, res) => {
 
   try {
 
     const {
-      prompt
+      prompt,
+      aspectRatio = "1:1",
+      resolution = "1K",
+      quality = "auto"
     } = req.body;
 
     if (!prompt) {
-
       return res.status(400).json({
-
         success: false,
-
         error:
           "Image prompt is required"
-
       });
-
     }
 
-    const image =
-      await generateImage(prompt);
+    const result =
+      await openRouterRequest(
+        "/images",
+        {
+          method: "POST",
 
-    return res.json({
+          body: JSON.stringify({
+
+            model: IMAGE_MODEL,
+
+            prompt:
+              `Create a high-quality realistic image based on this request:
+
+${prompt}`,
+
+            aspect_ratio:
+              aspectRatio,
+
+            resolution,
+
+            quality,
+
+            n: 1
+          })
+        }
+      );
+
+    const images =
+      result.data?.data || [];
+
+    if (!images.length) {
+      throw new Error(
+        "Image API returned no image"
+      );
+    }
+
+    const first =
+      images[0];
+
+    const base64 =
+      first.b64_json;
+
+    const mimeType =
+      first.media_type ||
+      "image/png";
+
+    if (!base64) {
+      throw new Error(
+        "Image API did not return base64 image data"
+      );
+    }
+
+    res.json({
 
       success: true,
 
-      type: "image",
+      image: {
 
-      image
+        mimeType,
 
+        base64,
+
+        dataUrl:
+          `data:${mimeType};base64,${base64}`
+      },
+
+      model: IMAGE_MODEL
     });
 
-  }
-
-  catch (error) {
+  } catch (error) {
 
     console.error(
       "IMAGE ERROR:",
       error
     );
 
-    return res.status(500).json({
-
+    res.status(500).json({
       success: false,
-
-      error:
-        error.message
-
+      error: error.message
     });
-
   }
-
 });
 
-// ==================================================
-// DIRECT VIDEO ENDPOINT
-// ==================================================
+// ================================
+// TEXT → VIDEO
+// ================================
 
 app.post("/api/video", async (req, res) => {
 
   try {
 
     const {
-      prompt
+      prompt,
+
+      duration = 4,
+
+      resolution = "720p",
+
+      aspectRatio = "16:9",
+
+      generateAudio = true,
+
+      imageUrl = null
     } = req.body;
 
     if (!prompt) {
-
       return res.status(400).json({
-
         success: false,
-
         error:
           "Video prompt is required"
-
       });
-
     }
 
-    const video =
-      await generateVideo(prompt);
+    const body = {
 
-    return res.json({
+      model: VIDEO_MODEL,
+
+      prompt,
+
+      duration,
+
+      resolution,
+
+      aspect_ratio:
+        aspectRatio,
+
+      generate_audio:
+        generateAudio
+    };
+
+    // Optional image → video
+    if (imageUrl) {
+
+      body.frame_images = [
+        {
+          type: "image_url",
+
+          image_url: {
+            url: imageUrl
+          },
+
+          frame_type:
+            "first_frame"
+        }
+      ];
+    }
+
+    const result =
+      await openRouterRequest(
+        "/videos",
+        {
+          method: "POST",
+
+          body:
+            JSON.stringify(body)
+        }
+      );
+
+    const job =
+      result.data;
+
+    res.json({
 
       success: true,
 
-      type: "video",
+      video: {
 
-      video
+        id: job.id,
 
+        status:
+          job.status,
+
+        pollingUrl:
+          job.polling_url ||
+          `/api/video/status/${job.id}`
+      },
+
+      model: VIDEO_MODEL
     });
 
-  }
-
-  catch (error) {
+  } catch (error) {
 
     console.error(
       "VIDEO ERROR:",
       error
     );
 
-    return res.status(500).json({
-
+    res.status(500).json({
       success: false,
-
-      error:
-        error.message
-
+      error: error.message
     });
-
   }
-
 });
 
-// ==================================================
-// START SERVER
-// ==================================================
+// ================================
+// VIDEO STATUS
+// ================================
+
+app.get(
+  "/api/video/status/:id",
+  async (req, res) => {
+
+    try {
+
+      const id =
+        req.params.id;
+
+      const result =
+        await openRouterRequest(
+          `/videos/${encodeURIComponent(id)}`,
+          {
+            method: "GET",
+
+            headers: {
+              "Content-Type":
+                undefined
+            }
+          }
+        );
+
+      const job =
+        result.data;
+
+      res.json({
+
+        success: true,
+
+        id: job.id,
+
+        status:
+          job.status,
+
+        error:
+          job.error || null,
+
+        progress:
+          job.progress ?? null,
+
+        pollingUrl:
+          job.polling_url ||
+          `/api/video/status/${id}`,
+
+        contentUrl:
+          job.status === "completed"
+            ? `/api/video/content/${id}`
+            : null
+      });
+
+    } catch (error) {
+
+      console.error(
+        "VIDEO STATUS ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+// ================================
+// VIDEO CONTENT
+// ================================
+
+app.get(
+  "/api/video/content/:id",
+  async (req, res) => {
+
+    try {
+
+      checkKey();
+
+      const id =
+        req.params.id;
+
+      const response =
+        await fetch(
+          `${BASE_URL}/videos/${encodeURIComponent(id)}/content`,
+          {
+            method: "GET",
+
+            headers: {
+              Authorization:
+                `Bearer ${OPENROUTER_API_KEY}`
+            }
+          }
+        );
+
+      if (!response.ok) {
+
+        const errorText =
+          await response.text();
+
+        throw new Error(
+          errorText ||
+          "Video download failed"
+        );
+      }
+
+      res.setHeader(
+        "Content-Type",
+        response.headers.get(
+          "content-type"
+        ) ||
+        "video/mp4"
+      );
+
+      const buffer =
+        Buffer.from(
+          await response.arrayBuffer()
+        );
+
+      res.send(buffer);
+
+    } catch (error) {
+
+      console.error(
+        "VIDEO CONTENT ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+// ================================
+// TEXT → SPEECH
+// ================================
+
+app.post("/api/tts", async (req, res) => {
+
+  try {
+
+    const {
+      text,
+
+      voice = "alloy",
+
+      responseFormat = "mp3"
+    } = req.body;
+
+    if (!text) {
+
+      return res.status(400).json({
+        success: false,
+        error:
+          "Text is required"
+      });
+
+    }
+
+    checkKey();
+
+    const response =
+      await fetch(
+        `${BASE_URL}/audio/speech`,
+        {
+          method: "POST",
+
+          headers: {
+            Authorization:
+              `Bearer ${OPENROUTER_API_KEY}`,
+
+            "Content-Type":
+              "application/json"
+          },
+
+          body:
+            JSON.stringify({
+
+              model: TTS_MODEL,
+
+              input: text,
+
+              voice,
+
+              response_format:
+                responseFormat
+            })
+        }
+      );
+
+    if (!response.ok) {
+
+      const error =
+        await response.text();
+
+      throw new Error(
+        error ||
+        "TTS failed"
+      );
+    }
+
+    const audio =
+      Buffer.from(
+        await response.arrayBuffer()
+      );
+
+    const mime =
+      responseFormat === "wav"
+        ? "audio/wav"
+        : "audio/mpeg";
+
+    res.setHeader(
+      "Content-Type",
+      mime
+    );
+
+    res.send(audio);
+
+  } catch (error) {
+
+    console.error(
+      "TTS ERROR:",
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ================================
+// SPEECH → TEXT
+// ================================
+
+app.post("/api/stt", async (req, res) => {
+
+  try {
+
+    const {
+      audio,
+      format = "wav"
+    } = req.body;
+
+    if (!audio) {
+
+      return res.status(400).json({
+        success: false,
+        error:
+          "Audio base64 is required"
+      });
+
+    }
+
+    const result =
+      await openRouterRequest(
+        "/audio/transcriptions",
+        {
+          method: "POST",
+
+          body:
+            JSON.stringify({
+
+              model: STT_MODEL,
+
+              input_audio: {
+
+                data: audio,
+
+                format
+              }
+            })
+        }
+      );
+
+    res.json({
+
+      success: true,
+
+      text:
+        result.data?.text ||
+        ""
+    });
+
+  } catch (error) {
+
+    console.error(
+      "STT ERROR:",
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ================================
+// ERROR HANDLER
+// ================================
+
+app.use(
+  (err, req, res, next) => {
+
+    console.error(
+      "SERVER ERROR:",
+      err
+    );
+
+    res.status(500).json({
+      success: false,
+      error:
+        err.message ||
+        "Internal server error"
+    });
+  }
+);
+
+// ================================
+// START
+// ================================
 
 app.listen(
   PORT,
@@ -705,8 +867,46 @@ app.listen(
   () => {
 
     console.log(
-      `AI Companion Backend running on port ${PORT}`
+      "================================"
     );
 
+    console.log(
+      "AI Companion Backend ONLINE"
+    );
+
+    console.log(
+      `Port: ${PORT}`
+    );
+
+    console.log(
+      `Chat: ${CHAT_MODEL}`
+    );
+
+    console.log(
+      `Image: ${IMAGE_MODEL}`
+    );
+
+    console.log(
+      `Video: ${VIDEO_MODEL}`
+    );
+
+    console.log(
+      `TTS: ${TTS_MODEL}`
+    );
+
+    console.log(
+      `STT: ${STT_MODEL}`
+    );
+
+    console.log(
+      "OpenRouter key:",
+      OPENROUTER_API_KEY
+        ? "CONFIGURED"
+        : "MISSING"
+    );
+
+    console.log(
+      "================================"
+    );
   }
 );
