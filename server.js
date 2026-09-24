@@ -5,13 +5,16 @@ const app = express();
 
 const PORT = process.env.PORT || 10000;
 
-const POLLINATIONS_BASE = "https://gen.pollinations.ai";
-const POLLINATIONS_KEY = process.env.POLLINATIONS_KEY;
+const POLLINATIONS =
+    "https://gen.pollinations.ai";
+
+const API_KEY =
+    process.env.POLLINATIONS_KEY;
 
 
-/* =========================================
+/* =========================
    MIDDLEWARE
-========================================= */
+========================= */
 
 app.use(cors());
 
@@ -20,16 +23,16 @@ app.use(express.json({
 }));
 
 
-/* =========================================
-   CHECK API KEY
-========================================= */
+/* =========================
+   KEY CHECK
+========================= */
 
-function checkApiKey(res) {
+function hasKey(res) {
 
-    if (!POLLINATIONS_KEY) {
+    if (!API_KEY) {
 
         res.status(500).json({
-            error: "POLLINATIONS_KEY missing in Render"
+            error: "POLLINATIONS_KEY missing"
         });
 
         return false;
@@ -39,9 +42,9 @@ function checkApiKey(res) {
 }
 
 
-/* =========================================
+/* =========================
    HOME
-========================================= */
+========================= */
 
 app.get("/", (req, res) => {
 
@@ -53,210 +56,43 @@ app.get("/", (req, res) => {
 });
 
 
-/* =========================================
+/* =========================
    HEALTH
-========================================= */
+========================= */
 
 app.get("/health", (req, res) => {
 
     res.json({
         ok: true,
-        server: "AI Companion Backend",
-        pollinationsKey:
-            !!POLLINATIONS_KEY
+        key: API_KEY ? "FOUND" : "MISSING"
     });
 
 });
 
 
-/* =========================================
-   GET AVAILABLE MODELS
-========================================= */
-
-async function getModels() {
-
-    const response = await fetch(
-        `${POLLINATIONS_BASE}/v1/models`
-    );
-
-    if (!response.ok) {
-
-        const text =
-            await response.text();
-
-        throw new Error(
-            `Models API ${response.status}: ${text}`
-        );
-    }
-
-    return await response.json();
-}
-
-
-/* =========================================
-   FIND TEXT MODEL AUTOMATICALLY
-========================================= */
-
-async function getTextModel() {
-
-    const data =
-        await getModels();
-
-    const models =
-        Array.isArray(data.data)
-            ? data.data
-            : [];
-
-
-    /*
-      First look for a model that supports
-      text input/output.
-    */
-
-    let model =
-        models.find((m) => {
-
-            const input =
-                m.input_modalities ||
-                m.inputModality ||
-                [];
-
-            const output =
-                m.output_modalities ||
-                m.outputModality ||
-                [];
-
-            return (
-                input.includes("text") &&
-                output.includes("text")
-            );
-
-        });
-
-
-    /*
-      If metadata format is different,
-      use known text model IDs.
-    */
-
-    if (!model) {
-
-        const preferred = [
-
-            "openai/gpt-5.4-nano",
-            "openai/gpt-5.4",
-            "anthropic/claude-sonnet-4.6",
-            "deepseek/deepseek-v4-flash"
-
-        ];
-
-
-        for (const id of preferred) {
-
-            const found =
-                models.find(
-                    (m) => m.id === id
-                );
-
-            if (found) {
-
-                model = found;
-
-                break;
-            }
-        }
-    }
-
-
-    /*
-      Last fallback:
-      choose a model whose category
-      looks like text.
-    */
-
-    if (!model) {
-
-        model =
-            models.find(
-                (m) =>
-                    m.category === "text"
-            );
-    }
-
-
-    if (!model) {
-
-        throw new Error(
-            "No text model available from /v1/models"
-        );
-    }
-
-
-    console.log(
-        "Selected text model:",
-        model.id
-    );
-
-
-    return model.id;
-}
-
-
-/* =========================================
-   DEBUG MODELS
-========================================= */
+/* =========================
+   MODELS
+========================= */
 
 app.get("/api/models", async (req, res) => {
 
     try {
 
+        const response = await fetch(
+            `${POLLINATIONS}/v1/models`
+        );
+
         const data =
-            await getModels();
+            await response.json();
 
-
-        const models =
-            Array.isArray(data.data)
-                ? data.data
-                : [];
-
-
-        res.json({
-
-            count:
-                models.length,
-
-            models:
-                models.map(
-                    (m) => ({
-                        id: m.id,
-                        category: m.category,
-                        owned_by: m.owned_by,
-                        input_modalities:
-                            m.input_modalities,
-                        output_modalities:
-                            m.output_modalities
-                    })
-                )
-
-        });
-
+        res.json(data);
 
     } catch (error) {
 
-        console.error(
-            "MODELS ERROR:",
-            error
-        );
-
+        console.error(error);
 
         res.status(500).json({
-
-            error:
-                "Could not load models",
-
-            details:
-                error.message
-
+            error: "Models request failed"
         });
 
     }
@@ -264,17 +100,15 @@ app.get("/api/models", async (req, res) => {
 });
 
 
-/* =========================================
-   NORMAL CHAT
-========================================= */
+/* =========================
+   CHAT
+========================= */
 
 app.post("/api/chat", async (req, res) => {
 
     try {
 
-        if (!checkApiKey(res)) {
-            return;
-        }
+        if (!hasKey(res)) return;
 
 
         const message =
@@ -286,33 +120,20 @@ app.post("/api/chat", async (req, res) => {
         if (!message) {
 
             return res.status(400).json({
-
-                error:
-                    "Message required"
-
+                error: "Message required"
             });
 
         }
 
 
         /*
-          Automatically find a working
-          text model from /v1/models.
+          Current Pollinations default
+          text model.
         */
-
-        const model =
-            await getTextModel();
-
-
-        console.log(
-            "CHAT MODEL:",
-            model
-        );
-
 
         const response =
             await fetch(
-                `${POLLINATIONS_BASE}/v1/chat/completions`,
+                `${POLLINATIONS}/v1/chat/completions`,
                 {
 
                     method: "POST",
@@ -320,7 +141,7 @@ app.post("/api/chat", async (req, res) => {
                     headers: {
 
                         "Authorization":
-                            `Bearer ${POLLINATIONS_KEY}`,
+                            `Bearer ${API_KEY}`,
 
                         "Content-Type":
                             "application/json"
@@ -329,7 +150,8 @@ app.post("/api/chat", async (req, res) => {
 
                     body: JSON.stringify({
 
-                        model: model,
+                        model:
+                            "openai/gpt-5.4-nano",
 
                         messages: [
 
@@ -337,7 +159,7 @@ app.post("/api/chat", async (req, res) => {
                                 role: "system",
 
                                 content:
-                                    "You are a friendly AI Companion. Reply naturally, helpfully and clearly. The user may speak Hindi, Hinglish or English. Reply in the same language when appropriate."
+                                    "You are a friendly AI companion. Reply naturally in Hindi, Hinglish or English according to the user's language."
                             },
 
                             {
@@ -355,16 +177,16 @@ app.post("/api/chat", async (req, res) => {
             );
 
 
-        const raw =
+        const text =
             await response.text();
 
 
         if (!response.ok) {
 
             console.error(
-                "CHAT API ERROR:",
+                "CHAT ERROR:",
                 response.status,
-                raw
+                text
             );
 
 
@@ -373,57 +195,28 @@ app.post("/api/chat", async (req, res) => {
             ).json({
 
                 error:
-                    "Pollinations chat failed",
-
-                status:
-                    response.status,
+                    "Chat API failed",
 
                 details:
-                    raw
+                    text
 
             });
 
         }
 
 
-        let data;
-
-        try {
-
-            data =
-                JSON.parse(raw);
-
-        } catch (e) {
-
-            console.error(
-                "INVALID CHAT JSON:",
-                raw
-            );
-
-            return res.status(500).json({
-
-                error:
-                    "Invalid response from AI",
-
-                details:
-                    raw
-
-            });
-
-        }
+        const data =
+            JSON.parse(text);
 
 
         const reply =
             data?.choices?.[0]?.message?.content ||
-            data?.choices?.[0]?.text ||
             "AI ne reply nahi diya.";
 
 
         res.json({
 
-            reply: reply,
-
-            model: model
+            reply: reply
 
         });
 
@@ -451,17 +244,15 @@ app.post("/api/chat", async (req, res) => {
 });
 
 
-/* =========================================
-   IMAGE GENERATION
-========================================= */
+/* =========================
+   IMAGE
+========================= */
 
 app.get("/api/image", async (req, res) => {
 
     try {
 
-        if (!checkApiKey(res)) {
-            return;
-        }
+        if (!hasKey(res)) return;
 
 
         const prompt =
@@ -482,47 +273,67 @@ app.get("/api/image", async (req, res) => {
         }
 
 
-        const imageUrl =
-            `${POLLINATIONS_BASE}/image/` +
-            encodeURIComponent(prompt) +
-            `?width=1024` +
-            `&height=1024`;
-
-
         console.log(
-            "IMAGE REQUEST:",
+            "IMAGE:",
             prompt
         );
 
 
+        /*
+          OpenAI-compatible image API.
+          We ask Pollinations for a URL
+          because frontend expects JSON.
+        */
+
         const response =
             await fetch(
-                imageUrl,
+                `${POLLINATIONS}/v1/images/generations`,
                 {
 
-                    method: "GET",
+                    method: "POST",
 
                     headers: {
 
                         "Authorization":
-                            `Bearer ${POLLINATIONS_KEY}`
+                            `Bearer ${API_KEY}`,
 
-                    }
+                        "Content-Type":
+                            "application/json"
+
+                    },
+
+                    body: JSON.stringify({
+
+                        model:
+                            "google/gemini-3.1-flash-image",
+
+                        prompt:
+                            prompt,
+
+                        n: 1,
+
+                        size:
+                            "1024x1024",
+
+                        response_format:
+                            "url"
+
+                    })
 
                 }
             );
 
 
+        const text =
+            await response.text();
+
+
         if (!response.ok) {
 
-            const errorText =
-                await response.text();
-
-
             console.error(
-                "IMAGE API ERROR:",
+                "IMAGE ERROR:",
                 response.status,
-                errorText
+                text
             );
 
 
@@ -531,44 +342,59 @@ app.get("/api/image", async (req, res) => {
             ).json({
 
                 error:
-                    "Pollinations image failed",
+                    "Image API failed",
 
                 status:
                     response.status,
 
                 details:
-                    errorText
+                    text
 
             });
 
         }
 
 
-        const contentType =
-            response.headers.get(
-                "content-type"
-            ) || "image/jpeg";
+        const data =
+            JSON.parse(text);
 
 
-        const buffer =
-            Buffer.from(
-                await response.arrayBuffer()
+        const imageUrl =
+            data?.data?.[0]?.url;
+
+
+        if (!imageUrl) {
+
+            console.error(
+                "IMAGE URL MISSING:",
+                data
             );
 
 
-        res.setHeader(
-            "Content-Type",
-            contentType
+            return res.status(500).json({
+
+                error:
+                    "Image URL missing",
+
+                details:
+                    JSON.stringify(data)
+
+            });
+
+        }
+
+
+        console.log(
+            "IMAGE URL CREATED"
         );
 
 
-        res.setHeader(
-            "Cache-Control",
-            "no-store"
-        );
+        res.json({
 
+            imageUrl:
+                imageUrl
 
-        res.send(buffer);
+        });
 
 
     } catch (error) {
@@ -594,17 +420,15 @@ app.get("/api/image", async (req, res) => {
 });
 
 
-/* =========================================
-   VIDEO GENERATION
-========================================= */
+/* =========================
+   VIDEO
+========================= */
 
 app.get("/api/video", async (req, res) => {
 
     try {
 
-        if (!checkApiKey(res)) {
-            return;
-        }
+        if (!hasKey(res)) return;
 
 
         const prompt =
@@ -625,28 +449,36 @@ app.get("/api/video", async (req, res) => {
         }
 
 
+        console.log(
+            "VIDEO:",
+            prompt
+        );
+
+
         /*
-          Current Pollinations video endpoint.
+          Current Pollinations video API.
         */
 
-        const videoUrl =
-            `${POLLINATIONS_BASE}/video/` +
+        const url =
+            `${POLLINATIONS}/video/` +
             encodeURIComponent(prompt) +
 
-            `?duration=4` +
+            `?model=google%2Fveo-3.1-fast` +
+
+            `&duration=4` +
 
             `&aspectRatio=16%3A9`;
 
 
         console.log(
-            "VIDEO REQUEST:",
-            prompt
+            "VIDEO URL:",
+            url
         );
 
 
         const response =
             await fetch(
-                videoUrl,
+                url,
                 {
 
                     method: "GET",
@@ -654,7 +486,7 @@ app.get("/api/video", async (req, res) => {
                     headers: {
 
                         "Authorization":
-                            `Bearer ${POLLINATIONS_KEY}`
+                            `Bearer ${API_KEY}`
 
                     }
 
@@ -669,7 +501,7 @@ app.get("/api/video", async (req, res) => {
 
 
             console.error(
-                "VIDEO API ERROR:",
+                "VIDEO ERROR:",
                 response.status,
                 errorText
             );
@@ -680,7 +512,7 @@ app.get("/api/video", async (req, res) => {
             ).json({
 
                 error:
-                    "Pollinations video failed",
+                    "Video API failed",
 
                 status:
                     response.status,
@@ -706,8 +538,9 @@ app.get("/api/video", async (req, res) => {
 
 
         console.log(
-            "VIDEO SIZE:",
-            buffer.length
+            "VIDEO GENERATED:",
+            buffer.length,
+            "bytes"
         );
 
 
@@ -755,9 +588,9 @@ app.get("/api/video", async (req, res) => {
 });
 
 
-/* =========================================
-   START SERVER
-========================================= */
+/* =========================
+   START
+========================= */
 
 app.listen(
     PORT,
@@ -765,12 +598,13 @@ app.listen(
     () => {
 
         console.log(
-            `AI Companion Backend running on port ${PORT}`
+            "AI Companion Backend running on port",
+            PORT
         );
 
         console.log(
             "Pollinations key:",
-            POLLINATIONS_KEY
+            API_KEY
                 ? "FOUND"
                 : "MISSING"
         );
