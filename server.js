@@ -3,13 +3,15 @@ const cors = require("cors");
 
 const app = express();
 
-const PORT =
-    process.env.PORT || 10000;
+const PORT = process.env.PORT || 10000;
+
+const POLLINATIONS_BASE = "https://gen.pollinations.ai";
+const POLLINATIONS_KEY = process.env.POLLINATIONS_KEY;
 
 
-/* =========================
+/* =========================================
    MIDDLEWARE
-========================= */
+========================================= */
 
 app.use(cors());
 
@@ -18,9 +20,28 @@ app.use(express.json({
 }));
 
 
-/* =========================
+/* =========================================
+   CHECK API KEY
+========================================= */
+
+function checkApiKey(res) {
+
+    if (!POLLINATIONS_KEY) {
+
+        res.status(500).json({
+            error: "POLLINATIONS_KEY missing in Render"
+        });
+
+        return false;
+    }
+
+    return true;
+}
+
+
+/* =========================================
    HOME
-========================= */
+========================================= */
 
 app.get("/", (req, res) => {
 
@@ -32,73 +53,283 @@ app.get("/", (req, res) => {
 });
 
 
-/* =========================
+/* =========================================
    HEALTH
-========================= */
+========================================= */
 
 app.get("/health", (req, res) => {
 
     res.json({
         ok: true,
-        message: "AI Companion Backend is running"
+        server: "AI Companion Backend",
+        pollinationsKey:
+            !!POLLINATIONS_KEY
     });
 
 });
 
 
-/* =========================
+/* =========================================
+   GET AVAILABLE MODELS
+========================================= */
+
+async function getModels() {
+
+    const response = await fetch(
+        `${POLLINATIONS_BASE}/v1/models`
+    );
+
+    if (!response.ok) {
+
+        const text =
+            await response.text();
+
+        throw new Error(
+            `Models API ${response.status}: ${text}`
+        );
+    }
+
+    return await response.json();
+}
+
+
+/* =========================================
+   FIND TEXT MODEL AUTOMATICALLY
+========================================= */
+
+async function getTextModel() {
+
+    const data =
+        await getModels();
+
+    const models =
+        Array.isArray(data.data)
+            ? data.data
+            : [];
+
+
+    /*
+      First look for a model that supports
+      text input/output.
+    */
+
+    let model =
+        models.find((m) => {
+
+            const input =
+                m.input_modalities ||
+                m.inputModality ||
+                [];
+
+            const output =
+                m.output_modalities ||
+                m.outputModality ||
+                [];
+
+            return (
+                input.includes("text") &&
+                output.includes("text")
+            );
+
+        });
+
+
+    /*
+      If metadata format is different,
+      use known text model IDs.
+    */
+
+    if (!model) {
+
+        const preferred = [
+
+            "openai/gpt-5.4-nano",
+            "openai/gpt-5.4",
+            "anthropic/claude-sonnet-4.6",
+            "deepseek/deepseek-v4-flash"
+
+        ];
+
+
+        for (const id of preferred) {
+
+            const found =
+                models.find(
+                    (m) => m.id === id
+                );
+
+            if (found) {
+
+                model = found;
+
+                break;
+            }
+        }
+    }
+
+
+    /*
+      Last fallback:
+      choose a model whose category
+      looks like text.
+    */
+
+    if (!model) {
+
+        model =
+            models.find(
+                (m) =>
+                    m.category === "text"
+            );
+    }
+
+
+    if (!model) {
+
+        throw new Error(
+            "No text model available from /v1/models"
+        );
+    }
+
+
+    console.log(
+        "Selected text model:",
+        model.id
+    );
+
+
+    return model.id;
+}
+
+
+/* =========================================
+   DEBUG MODELS
+========================================= */
+
+app.get("/api/models", async (req, res) => {
+
+    try {
+
+        const data =
+            await getModels();
+
+
+        const models =
+            Array.isArray(data.data)
+                ? data.data
+                : [];
+
+
+        res.json({
+
+            count:
+                models.length,
+
+            models:
+                models.map(
+                    (m) => ({
+                        id: m.id,
+                        category: m.category,
+                        owned_by: m.owned_by,
+                        input_modalities:
+                            m.input_modalities,
+                        output_modalities:
+                            m.output_modalities
+                    })
+                )
+
+        });
+
+
+    } catch (error) {
+
+        console.error(
+            "MODELS ERROR:",
+            error
+        );
+
+
+        res.status(500).json({
+
+            error:
+                "Could not load models",
+
+            details:
+                error.message
+
+        });
+
+    }
+
+});
+
+
+/* =========================================
    NORMAL CHAT
-========================= */
+========================================= */
 
 app.post("/api/chat", async (req, res) => {
 
     try {
 
+        if (!checkApiKey(res)) {
+            return;
+        }
+
+
         const message =
-            String(req.body.message || "").trim();
+            String(
+                req.body.message || ""
+            ).trim();
 
 
         if (!message) {
 
             return res.status(400).json({
-                error: "Message required"
-            });
 
-        }
-
-
-        const apiKey =
-            process.env.POLLINATIONS_KEY;
-
-
-        if (!apiKey) {
-
-            return res.status(500).json({
                 error:
-                    "POLLINATIONS_KEY missing in Render"
+                    "Message required"
+
             });
 
         }
+
+
+        /*
+          Automatically find a working
+          text model from /v1/models.
+        */
+
+        const model =
+            await getTextModel();
+
+
+        console.log(
+            "CHAT MODEL:",
+            model
+        );
 
 
         const response =
             await fetch(
-                "https://gen.pollinations.ai/v1/chat/completions",
+                `${POLLINATIONS_BASE}/v1/chat/completions`,
                 {
+
                     method: "POST",
 
                     headers: {
+
                         "Authorization":
-                            "Bearer " + apiKey,
+                            `Bearer ${POLLINATIONS_KEY}`,
 
                         "Content-Type":
                             "application/json"
+
                     },
 
                     body: JSON.stringify({
 
-                        model:
-                            "openai/gpt-5.6-luna",
+                        model: model,
 
                         messages: [
 
@@ -106,7 +337,7 @@ app.post("/api/chat", async (req, res) => {
                                 role: "system",
 
                                 content:
-                                    "You are a friendly AI companion. Reply naturally and helpfully. Use simple language when possible."
+                                    "You are a friendly AI Companion. Reply naturally, helpfully and clearly. The user may speak Hindi, Hinglish or English. Reply in the same language when appropriate."
                             },
 
                             {
@@ -116,12 +347,10 @@ app.post("/api/chat", async (req, res) => {
                                     message
                             }
 
-                        ],
-
-                        temperature:
-                            0.8
+                        ]
 
                     })
+
                 }
             );
 
@@ -134,6 +363,7 @@ app.post("/api/chat", async (req, res) => {
 
             console.error(
                 "CHAT API ERROR:",
+                response.status,
                 raw
             );
 
@@ -145,6 +375,9 @@ app.post("/api/chat", async (req, res) => {
                 error:
                     "Pollinations chat failed",
 
+                status:
+                    response.status,
+
                 details:
                     raw
 
@@ -153,8 +386,31 @@ app.post("/api/chat", async (req, res) => {
         }
 
 
-        const data =
-            JSON.parse(raw);
+        let data;
+
+        try {
+
+            data =
+                JSON.parse(raw);
+
+        } catch (e) {
+
+            console.error(
+                "INVALID CHAT JSON:",
+                raw
+            );
+
+            return res.status(500).json({
+
+                error:
+                    "Invalid response from AI",
+
+                details:
+                    raw
+
+            });
+
+        }
 
 
         const reply =
@@ -165,7 +421,9 @@ app.post("/api/chat", async (req, res) => {
 
         res.json({
 
-            reply: reply
+            reply: reply,
+
+            model: model
 
         });
 
@@ -193,62 +451,64 @@ app.post("/api/chat", async (req, res) => {
 });
 
 
-/* =========================
-   IMAGE
-========================= */
+/* =========================================
+   IMAGE GENERATION
+========================================= */
 
 app.get("/api/image", async (req, res) => {
 
     try {
 
+        if (!checkApiKey(res)) {
+            return;
+        }
+
+
         const prompt =
-            String(req.query.prompt || "").trim();
+            String(
+                req.query.prompt || ""
+            ).trim();
 
 
         if (!prompt) {
 
             return res.status(400).json({
-                error: "Image prompt required"
-            });
 
-        }
-
-
-        const apiKey =
-            process.env.POLLINATIONS_KEY;
-
-
-        if (!apiKey) {
-
-            return res.status(500).json({
                 error:
-                    "POLLINATIONS_KEY missing in Render"
+                    "Image prompt required"
+
             });
 
         }
 
 
-        const url =
-            "https://gen.pollinations.ai/image/" +
+        const imageUrl =
+            `${POLLINATIONS_BASE}/image/` +
             encodeURIComponent(prompt) +
-            "?model=google%2Fgemini-3.1-flash-image" +
-            "&width=1024" +
-            "&height=1024";
+            `?width=1024` +
+            `&height=1024`;
 
 
-        /*
-          Pollinations image endpoint
-          returns actual image bytes.
-        */
+        console.log(
+            "IMAGE REQUEST:",
+            prompt
+        );
+
 
         const response =
             await fetch(
-                url,
+                imageUrl,
                 {
+
+                    method: "GET",
+
                     headers: {
+
                         "Authorization":
-                            "Bearer " + apiKey
+                            `Bearer ${POLLINATIONS_KEY}`
+
                     }
+
                 }
             );
 
@@ -261,6 +521,7 @@ app.get("/api/image", async (req, res) => {
 
             console.error(
                 "IMAGE API ERROR:",
+                response.status,
                 errorText
             );
 
@@ -271,6 +532,9 @@ app.get("/api/image", async (req, res) => {
 
                 error:
                     "Pollinations image failed",
+
+                status:
+                    response.status,
 
                 details:
                     errorText
@@ -298,13 +562,19 @@ app.get("/api/image", async (req, res) => {
         );
 
 
+        res.setHeader(
+            "Cache-Control",
+            "no-store"
+        );
+
+
         res.send(buffer);
 
 
     } catch (error) {
 
         console.error(
-            "IMAGE ERROR:",
+            "IMAGE SERVER ERROR:",
             error
         );
 
@@ -324,142 +594,23 @@ app.get("/api/image", async (req, res) => {
 });
 
 
-/* =========================
-   IMAGE JSON VERSION
-========================= */
-
-app.get("/api/image-url", async (req, res) => {
-
-    try {
-
-        const prompt =
-            String(req.query.prompt || "").trim();
-
-
-        if (!prompt) {
-
-            return res.status(400).json({
-                error: "Image prompt required"
-            });
-
-        }
-
-
-        const apiKey =
-            process.env.POLLINATIONS_KEY;
-
-
-        if (!apiKey) {
-
-            return res.status(500).json({
-                error:
-                    "POLLINATIONS_KEY missing in Render"
-            });
-
-        }
-
-
-        const url =
-            "https://gen.pollinations.ai/image/" +
-            encodeURIComponent(prompt) +
-            "?model=google%2Fgemini-3.1-flash-image" +
-            "&width=1024" +
-            "&height=1024";
-
-
-        const response =
-            await fetch(
-                url,
-                {
-                    headers: {
-                        "Authorization":
-                            "Bearer " + apiKey
-                    }
-                }
-            );
-
-
-        if (!response.ok) {
-
-            const errorText =
-                await response.text();
-
-
-            return res.status(
-                response.status
-            ).json({
-
-                error:
-                    "Image generation failed",
-
-                details:
-                    errorText
-
-            });
-
-        }
-
-
-        /*
-          We proxy the generated image
-          through our backend.
-        */
-
-        const buffer =
-            Buffer.from(
-                await response.arrayBuffer()
-            );
-
-
-        const base64 =
-            buffer.toString("base64");
-
-
-        const contentType =
-            response.headers.get(
-                "content-type"
-            ) || "image/jpeg";
-
-
-        const imageUrl =
-            "data:" +
-            contentType +
-            ";base64," +
-            base64;
-
-
-        res.json({
-            imageUrl
-        });
-
-
-    } catch (error) {
-
-        console.error(error);
-
-
-        res.status(500).json({
-
-            error:
-                "Image generation failed"
-
-        });
-
-    }
-
-});
-
-
-/* =========================
-   VIDEO
-========================= */
+/* =========================================
+   VIDEO GENERATION
+========================================= */
 
 app.get("/api/video", async (req, res) => {
 
     try {
 
+        if (!checkApiKey(res)) {
+            return;
+        }
+
+
         const prompt =
-            String(req.query.prompt || "").trim();
+            String(
+                req.query.prompt || ""
+            ).trim();
 
 
         if (!prompt) {
@@ -474,35 +625,17 @@ app.get("/api/video", async (req, res) => {
         }
 
 
-        const apiKey =
-            process.env.POLLINATIONS_KEY;
-
-
-        if (!apiKey) {
-
-            return res.status(500).json({
-
-                error:
-                    "POLLINATIONS_KEY missing in Render"
-
-            });
-
-        }
-
-
         /*
-          Current Pollinations video API
+          Current Pollinations video endpoint.
         */
 
         const videoUrl =
-            "https://gen.pollinations.ai/video/" +
+            `${POLLINATIONS_BASE}/video/` +
             encodeURIComponent(prompt) +
 
-            "?model=google%2Fveo-3.1-fast" +
+            `?duration=4` +
 
-            "&duration=4" +
-
-            "&aspectRatio=16%3A9";
+            `&aspectRatio=16%3A9`;
 
 
         console.log(
@@ -515,12 +648,16 @@ app.get("/api/video", async (req, res) => {
             await fetch(
                 videoUrl,
                 {
+
                     method: "GET",
 
                     headers: {
+
                         "Authorization":
-                            "Bearer " + apiKey
+                            `Bearer ${POLLINATIONS_KEY}`
+
                     }
+
                 }
             );
 
@@ -544,6 +681,9 @@ app.get("/api/video", async (req, res) => {
 
                 error:
                     "Pollinations video failed",
+
+                status:
+                    response.status,
 
                 details:
                     errorText
@@ -615,9 +755,9 @@ app.get("/api/video", async (req, res) => {
 });
 
 
-/* =========================
+/* =========================================
    START SERVER
-========================= */
+========================================= */
 
 app.listen(
     PORT,
@@ -625,8 +765,14 @@ app.listen(
     () => {
 
         console.log(
-            "AI Companion server running on port " +
-            PORT
+            `AI Companion Backend running on port ${PORT}`
+        );
+
+        console.log(
+            "Pollinations key:",
+            POLLINATIONS_KEY
+                ? "FOUND"
+                : "MISSING"
         );
 
     }
