@@ -7,9 +7,24 @@ app.use(cors());
 
 app.use(express.json());
 
-/* =========================
-   CHAT
-========================= */
+
+/* =================================
+   HOME
+================================= */
+
+app.get("/", (req, res) => {
+
+  res.json({
+    status: "online",
+    message: "AI Companion Backend"
+  });
+
+});
+
+
+/* =================================
+   NORMAL AI CHAT
+================================= */
 
 app.post("/api/chat", async (req, res) => {
 
@@ -18,36 +33,59 @@ app.post("/api/chat", async (req, res) => {
     const message =
       req.body.message;
 
-    if(!message) {
+    if(!message){
 
       return res.status(400).json({
-        error: "Message required"
+        error:"Message required"
       });
 
     }
 
 
     /*
-      Yahan apna AI API call lagao.
-      Example ke liye temporary reply.
+      Pollinations text API
     */
 
+    const url =
+      "https://text.pollinations.ai/" +
+      encodeURIComponent(message) +
+      "?model=openai";
+
+
+    const response =
+      await fetch(url);
+
+
+    if(!response.ok){
+
+      throw new Error(
+        "AI API error: " +
+        response.status
+      );
+
+    }
+
+
     const reply =
-      "Tumne kaha: " + message;
+      await response.text();
 
 
     res.json({
+
       reply: reply
+
     });
 
   }
-
-  catch(error) {
+  catch(error){
 
     console.error(error);
 
     res.status(500).json({
-      error: "Chat failed"
+
+      error:
+        "AI chat failed"
+
     });
 
   }
@@ -55,50 +93,49 @@ app.post("/api/chat", async (req, res) => {
 });
 
 
-/* =========================
+/* =================================
    IMAGE
-========================= */
+================================= */
 
-app.post("/api/image", async (req, res) => {
+app.post("/api/image", async (req,res) => {
 
-  try {
+  try{
 
     const prompt =
       req.body.prompt;
 
-    if(!prompt) {
+    if(!prompt){
 
       return res.status(400).json({
-        error: "Prompt required"
+
+        error:
+          "Image prompt required"
+
       });
 
     }
 
 
     /*
-      YAHAN IMAGE API CONNECT KARNI HAI.
-
-      API se image URL milne ke baad:
-
-      res.json({
-        imageUrl: imageUrl
-      });
+      Current Pollinations
+      image endpoint
     */
 
+    const imageUrl =
+      "https://image.pollinations.ai/prompt/" +
+      encodeURIComponent(prompt) +
+      "?width=1024&height=1024&model=flux";
 
-    res.status(501).json({
 
-      error:
-        "Image API not connected yet",
+    res.json({
 
-      prompt:
-        prompt
+      imageUrl:
+        imageUrl
 
     });
 
   }
-
-  catch(error) {
+  catch(error){
 
     console.error(error);
 
@@ -114,25 +151,13 @@ app.post("/api/image", async (req, res) => {
 });
 
 
-/* =========================
-   HEALTH
-========================= */
-
-app.get("/", (req, res) => {
-
-  res.send(
-    "AI Companion Backend Online"
-  );
-
-});
-
-
-/* =========================
-   SERVER
-========================= */
+/* =================================
+   PORT
+================================= */
 
 const PORT =
   process.env.PORT || 3000;
+
 
 app.listen(
   PORT,
@@ -140,7 +165,7 @@ app.listen(
   () => {
 
     console.log(
-      "Server running on port " +
+      "AI Companion running on port " +
       PORT
     );
 
