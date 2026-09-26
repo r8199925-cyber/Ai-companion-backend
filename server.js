@@ -4,23 +4,11 @@ const cors = require("cors");
 const app = express();
 
 const PORT = process.env.PORT || 10000;
-
-const POLLINATIONS =
-    "https://gen.pollinations.ai";
-
-const API_KEY =
-    process.env.POLLINATIONS_KEY;
-
-
-/* =========================
-   MIDDLEWARE
-========================= */
+const POLLINATIONS = "https://gen.pollinations.ai";
+const API_KEY = process.env.POLLINATIONS_KEY;
 
 app.use(cors());
-
-app.use(express.json({
-    limit: "10mb"
-}));
+app.use(express.json({ limit: "10mb" }));
 
 
 /* =========================
@@ -28,13 +16,10 @@ app.use(express.json({
 ========================= */
 
 function hasKey(res) {
-
     if (!API_KEY) {
-
         res.status(500).json({
             error: "POLLINATIONS_KEY missing"
         });
-
         return false;
     }
 
@@ -47,12 +32,10 @@ function hasKey(res) {
 ========================= */
 
 app.get("/", (req, res) => {
-
     res.json({
         status: "AI Companion Backend",
         online: true
     });
-
 });
 
 
@@ -61,12 +44,10 @@ app.get("/", (req, res) => {
 ========================= */
 
 app.get("/health", (req, res) => {
-
     res.json({
         ok: true,
         key: API_KEY ? "FOUND" : "MISSING"
     });
-
 });
 
 
@@ -75,28 +56,32 @@ app.get("/health", (req, res) => {
 ========================= */
 
 app.get("/api/models", async (req, res) => {
-
     try {
 
         const response = await fetch(
             `${POLLINATIONS}/v1/models`
         );
 
-        const data =
-            await response.json();
+        const text = await response.text();
 
-        res.json(data);
+        if (!response.ok) {
+            return res.status(response.status).json({
+                error: "Models request failed",
+                details: text
+            });
+        }
+
+        res.json(JSON.parse(text));
 
     } catch (error) {
 
-        console.error(error);
+        console.error("MODELS ERROR:", error);
 
         res.status(500).json({
-            error: "Models request failed"
+            error: "Models request failed",
+            details: error.message
         });
-
     }
-
 });
 
 
@@ -110,76 +95,58 @@ app.post("/api/chat", async (req, res) => {
 
         if (!hasKey(res)) return;
 
-
         const message =
-            String(
-                req.body.message || ""
-            ).trim();
-
+            String(req.body.message || "").trim();
 
         if (!message) {
-
             return res.status(400).json({
                 error: "Message required"
             });
-
         }
 
+        console.log("CHAT:", message);
 
-        /*
-          Current Pollinations default
-          text model.
-        */
+        const response = await fetch(
+            `${POLLINATIONS}/v1/chat/completions`,
+            {
+                method: "POST",
 
-        const response =
-            await fetch(
-                `${POLLINATIONS}/v1/chat/completions`,
-                {
+                headers: {
+                    "Authorization":
+                        `Bearer ${API_KEY}`,
 
-                    method: "POST",
+                    "Content-Type":
+                        "application/json"
+                },
 
-                    headers: {
+                body: JSON.stringify({
 
-                        "Authorization":
-                            `Bearer ${API_KEY}`,
+                    model:
+                        "openai/gpt-5.4-nano",
 
-                        "Content-Type":
-                            "application/json"
+                    messages: [
 
-                    },
+                        {
+                            role: "system",
 
-                    body: JSON.stringify({
+                            content:
+                                "You are a friendly AI companion. Reply naturally in Hindi, Hinglish or English according to the user's language."
+                        },
 
-                        model:
-                            "openai/gpt-5.4-nano",
+                        {
+                            role: "user",
 
-                        messages: [
+                            content: message
+                        }
 
-                            {
-                                role: "system",
+                    ]
 
-                                content:
-                                    "You are a friendly AI companion. Reply naturally in Hindi, Hinglish or English according to the user's language."
-                            },
-
-                            {
-                                role: "user",
-
-                                content:
-                                    message
-                            }
-
-                        ]
-
-                    })
-
-                }
-            );
-
+                })
+            }
+        );
 
         const text =
             await response.text();
-
 
         if (!response.ok) {
 
@@ -188,7 +155,6 @@ app.post("/api/chat", async (req, res) => {
                 response.status,
                 text
             );
-
 
             return res.status(
                 response.status
@@ -199,27 +165,19 @@ app.post("/api/chat", async (req, res) => {
 
                 details:
                     text
-
             });
-
         }
-
 
         const data =
             JSON.parse(text);
-
 
         const reply =
             data?.choices?.[0]?.message?.content ||
             "AI ne reply nahi diya.";
 
-
         res.json({
-
             reply: reply
-
         });
-
 
     } catch (error) {
 
@@ -228,7 +186,6 @@ app.post("/api/chat", async (req, res) => {
             error
         );
 
-
         res.status(500).json({
 
             error:
@@ -236,11 +193,8 @@ app.post("/api/chat", async (req, res) => {
 
             details:
                 error.message
-
         });
-
     }
-
 });
 
 
@@ -254,88 +208,77 @@ app.get("/api/image", async (req, res) => {
 
         if (!hasKey(res)) return;
 
-
         const prompt =
-            String(
-                req.query.prompt || ""
-            ).trim();
-
+            String(req.query.prompt || "").trim();
 
         if (!prompt) {
 
             return res.status(400).json({
-
-                error:
-                    "Image prompt required"
-
+                error: "Image prompt required"
             });
-
         }
 
-
         console.log(
-            "IMAGE:",
+            "IMAGE REQUEST:",
             prompt
         );
 
 
         /*
-          OpenAI-compatible image API.
-          We ask Pollinations for a URL
-          because frontend expects JSON.
+        Current Pollinations image endpoint.
+
+        We use the direct image URL method
+        instead of /v1/images/generations.
+
+        This avoids problems with:
+        - unsupported image model IDs
+        - response_format
+        - b64_json/url differences
+        */
+
+
+        const imageURL =
+            `${POLLINATIONS}/image/` +
+            encodeURIComponent(prompt) +
+            `?model=flux` +
+            `&width=1024` +
+            `&height=1024`;
+
+
+        console.log(
+            "IMAGE URL:",
+            imageURL
+        );
+
+
+        /*
+        Test the image request first.
         */
 
         const response =
             await fetch(
-                `${POLLINATIONS}/v1/images/generations`,
+                imageURL,
                 {
-
-                    method: "POST",
+                    method: "GET",
 
                     headers: {
-
                         "Authorization":
-                            `Bearer ${API_KEY}`,
-
-                        "Content-Type":
-                            "application/json"
-
-                    },
-
-                    body: JSON.stringify({
-
-                        model:
-                            "google/gemini-3.1-flash-image",
-
-                        prompt:
-                            prompt,
-
-                        n: 1,
-
-                        size:
-                            "1024x1024",
-
-                        response_format:
-                            "url"
-
-                    })
-
+                            `Bearer ${API_KEY}`
+                    }
                 }
             );
 
 
-        const text =
-            await response.text();
-
-
         if (!response.ok) {
+
+            const errorText =
+                await response.text();
 
             console.error(
                 "IMAGE ERROR:",
                 response.status,
-                text
+                errorText
             );
-
 
             return res.status(
                 response.status
@@ -348,52 +291,22 @@ app.get("/api/image", async (req, res) => {
                     response.status,
 
                 details:
-                    text
-
+                    errorText
             });
-
         }
 
 
-        const data =
-            JSON.parse(text);
+        /*
+        We don't send the image itself
+        through Render.
 
-
-        const imageUrl =
-            data?.data?.[0]?.url;
-
-
-        if (!imageUrl) {
-
-            console.error(
-                "IMAGE URL MISSING:",
-                data
-            );
-
-
-            return res.status(500).json({
-
-                error:
-                    "Image URL missing",
-
-                details:
-                    JSON.stringify(data)
-
-            });
-
-        }
-
-
-        console.log(
-            "IMAGE URL CREATED"
-        );
-
+        We return the Pollinations URL.
+        */
 
         res.json({
 
             imageUrl:
-                imageUrl
-
+                imageURL
         });
 
 
@@ -404,7 +317,6 @@ app.get("/api/image", async (req, res) => {
             error
         );
 
-
         res.status(500).json({
 
             error:
@@ -412,11 +324,8 @@ app.get("/api/image", async (req, res) => {
 
             details:
                 error.message
-
         });
-
     }
-
 });
 
 
@@ -430,66 +339,52 @@ app.get("/api/video", async (req, res) => {
 
         if (!hasKey(res)) return;
 
-
         const prompt =
-            String(
-                req.query.prompt || ""
-            ).trim();
-
+            String(req.query.prompt || "").trim();
 
         if (!prompt) {
 
             return res.status(400).json({
-
-                error:
-                    "Video prompt required"
-
+                error: "Video prompt required"
             });
-
         }
 
-
         console.log(
-            "VIDEO:",
+            "VIDEO REQUEST:",
             prompt
         );
 
 
         /*
-          Current Pollinations video API.
+        Current Pollinations video endpoint.
+
+        "veo" is the model ID.
         */
 
-        const url =
+        const videoURL =
             `${POLLINATIONS}/video/` +
             encodeURIComponent(prompt) +
-
-            `?model=google%2Fveo-3.1-fast` +
-
+            `?model=veo` +
             `&duration=4` +
-
-            `&aspectRatio=16%3A9`;
+            `&aspectRatio=16:9`;
 
 
         console.log(
             "VIDEO URL:",
-            url
+            videoURL
         );
 
 
         const response =
             await fetch(
-                url,
+                videoURL,
                 {
-
                     method: "GET",
 
                     headers: {
-
                         "Authorization":
                             `Bearer ${API_KEY}`
-
                     }
-
                 }
             );
 
@@ -499,13 +394,11 @@ app.get("/api/video", async (req, res) => {
             const errorText =
                 await response.text();
 
-
             console.error(
                 "VIDEO ERROR:",
                 response.status,
                 errorText
             );
-
 
             return res.status(
                 response.status
@@ -519,9 +412,7 @@ app.get("/api/video", async (req, res) => {
 
                 details:
                     errorText
-
             });
-
         }
 
 
@@ -537,6 +428,14 @@ app.get("/api/video", async (req, res) => {
             );
 
 
+        if (!buffer.length) {
+
+            return res.status(500).json({
+                error: "Empty video received"
+            });
+        }
+
+
         console.log(
             "VIDEO GENERATED:",
             buffer.length,
@@ -549,12 +448,10 @@ app.get("/api/video", async (req, res) => {
             contentType
         );
 
-
         res.setHeader(
             "Content-Length",
             buffer.length
         );
-
 
         res.setHeader(
             "Cache-Control",
@@ -572,7 +469,6 @@ app.get("/api/video", async (req, res) => {
             error
         );
 
-
         res.status(500).json({
 
             error:
@@ -580,16 +476,13 @@ app.get("/api/video", async (req, res) => {
 
             details:
                 error.message
-
         });
-
     }
-
 });
 
 
 /* =========================
-   START
+   START SERVER
 ========================= */
 
 app.listen(
@@ -598,16 +491,27 @@ app.listen(
     () => {
 
         console.log(
-            "AI Companion Backend running on port",
+            "================================="
+        );
+
+        console.log(
+            "AI Companion Backend ONLINE"
+        );
+
+        console.log(
+            "PORT:",
             PORT
         );
 
         console.log(
-            "Pollinations key:",
+            "Pollinations Key:",
             API_KEY
                 ? "FOUND"
                 : "MISSING"
         );
 
+        console.log(
+            "================================="
+        );
     }
 );
