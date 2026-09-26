@@ -244,6 +244,7 @@ app.post("/api/chat", async (req, res) => {
 });
 
 
+
 /* =========================
    IMAGE
 ========================= */
@@ -254,76 +255,42 @@ app.get("/api/image", async (req, res) => {
 
         if (!hasKey(res)) return;
 
-
         const prompt =
-            String(
-                req.query.prompt || ""
-            ).trim();
-
+            String(req.query.prompt || "").trim();
 
         if (!prompt) {
-
             return res.status(400).json({
-
-                error:
-                    "Image prompt required"
+                error: "Image prompt required"
             });
         }
 
-
-        console.log(
-            "IMAGE REQUEST:",
-            prompt
-        );
-
-
-        /*
-          Current Pollinations image API.
-
-          nanobanana-2 is a current
-          Pollinations image model.
-        */
+        console.log("IMAGE REQUEST:", prompt);
 
         const imageURL =
             `${POLLINATIONS}/image/` +
             encodeURIComponent(prompt) +
-            `?model=nanobanana-2` +
+            `?model=flux` +
             `&width=1024` +
             `&height=1024`;
 
+        console.log("IMAGE URL:", imageURL);
 
-        console.log(
-            "IMAGE URL:",
-            imageURL
-        );
+        const response = await fetch(
+            imageURL,
+            {
+                method: "GET",
 
-
-        /*
-          Test generation request.
-        */
-
-        const response =
-            await fetch(
-                imageURL,
-                {
-
-                    method: "GET",
-
-                    headers: {
-
-                        "Authorization":
-                            `Bearer ${API_KEY}`
-                    }
-
+                headers: {
+                    "Authorization":
+                        `Bearer ${API_KEY}`
                 }
-            );
-
+            }
+        );
 
         if (!response.ok) {
 
             const errorText =
                 await response.text();
-
 
             console.error(
                 "IMAGE ERROR:",
@@ -331,13 +298,11 @@ app.get("/api/image", async (req, res) => {
                 errorText
             );
 
-
             return res.status(
                 response.status
             ).json({
 
-                error:
-                    "Image API failed",
+                error: "Image API failed",
 
                 status:
                     response.status,
@@ -347,18 +312,45 @@ app.get("/api/image", async (req, res) => {
             });
         }
 
+        const contentType =
+            response.headers.get(
+                "content-type"
+            ) || "image/jpeg";
+
+        const buffer =
+            Buffer.from(
+                await response.arrayBuffer()
+            );
+
+        if (!buffer.length) {
+
+            return res.status(500).json({
+                error: "Empty image received"
+            });
+        }
 
         /*
-          Return URL to frontend.
+          Image ko backend se directly return
+          kar rahe hain. Isse browser ko
+          Pollinations API key ki zarurat nahi padegi.
         */
 
-        res.json({
+        res.setHeader(
+            "Content-Type",
+            contentType
+        );
 
-            imageUrl:
-                imageURL
+        res.setHeader(
+            "Content-Length",
+            buffer.length
+        );
 
-        });
+        res.setHeader(
+            "Cache-Control",
+            "no-store"
+        );
 
+        res.send(buffer);
 
     } catch (error) {
 
@@ -366,7 +358,6 @@ app.get("/api/image", async (req, res) => {
             "IMAGE SERVER ERROR:",
             error
         );
-
 
         res.status(500).json({
 
