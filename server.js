@@ -16,10 +16,13 @@ app.use(express.json({ limit: "10mb" }));
 ========================= */
 
 function hasKey(res) {
+
     if (!API_KEY) {
+
         res.status(500).json({
             error: "POLLINATIONS_KEY missing"
         });
+
         return false;
     }
 
@@ -32,10 +35,12 @@ function hasKey(res) {
 ========================= */
 
 app.get("/", (req, res) => {
+
     res.json({
         status: "AI Companion Backend",
         online: true
     });
+
 });
 
 
@@ -44,10 +49,12 @@ app.get("/", (req, res) => {
 ========================= */
 
 app.get("/health", (req, res) => {
+
     res.json({
         ok: true,
         key: API_KEY ? "FOUND" : "MISSING"
     });
+
 });
 
 
@@ -56,32 +63,52 @@ app.get("/health", (req, res) => {
 ========================= */
 
 app.get("/api/models", async (req, res) => {
+
     try {
 
-        const response = await fetch(
-            `${POLLINATIONS}/v1/models`
-        );
+        const response =
+            await fetch(
+                `${POLLINATIONS}/v1/models`
+            );
 
-        const text = await response.text();
+        const text =
+            await response.text();
 
         if (!response.ok) {
-            return res.status(response.status).json({
-                error: "Models request failed",
-                details: text
+
+            return res.status(
+                response.status
+            ).json({
+
+                error:
+                    "Models request failed",
+
+                details:
+                    text
             });
         }
 
-        res.json(JSON.parse(text));
+        res.json(
+            JSON.parse(text)
+        );
 
     } catch (error) {
 
-        console.error("MODELS ERROR:", error);
+        console.error(
+            "MODELS ERROR:",
+            error
+        );
 
         res.status(500).json({
-            error: "Models request failed",
-            details: error.message
+
+            error:
+                "Models request failed",
+
+            details:
+                error.message
         });
     }
+
 });
 
 
@@ -96,57 +123,71 @@ app.post("/api/chat", async (req, res) => {
         if (!hasKey(res)) return;
 
         const message =
-            String(req.body.message || "").trim();
+            String(
+                req.body.message || ""
+            ).trim();
 
         if (!message) {
+
             return res.status(400).json({
                 error: "Message required"
             });
         }
 
-        console.log("CHAT:", message);
-
-        const response = await fetch(
-            `${POLLINATIONS}/v1/chat/completions`,
-            {
-                method: "POST",
-
-                headers: {
-                    "Authorization":
-                        `Bearer ${API_KEY}`,
-
-                    "Content-Type":
-                        "application/json"
-                },
-
-                body: JSON.stringify({
-
-                    model:
-                        "openai/gpt-5.4-nano",
-
-                    messages: [
-
-                        {
-                            role: "system",
-
-                            content:
-                                "You are a friendly AI companion. Reply naturally in Hindi, Hinglish or English according to the user's language."
-                        },
-
-                        {
-                            role: "user",
-
-                            content: message
-                        }
-
-                    ]
-
-                })
-            }
+        console.log(
+            "CHAT:",
+            message
         );
+
+
+        const response =
+            await fetch(
+                `${POLLINATIONS}/v1/chat/completions`,
+                {
+
+                    method: "POST",
+
+                    headers: {
+
+                        "Authorization":
+                            `Bearer ${API_KEY}`,
+
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+
+                        model:
+                            "openai",
+
+                        messages: [
+
+                            {
+                                role: "system",
+
+                                content:
+                                    "You are a friendly AI companion. Reply naturally in Hindi, Hinglish or English according to the user's language."
+                            },
+
+                            {
+                                role: "user",
+
+                                content:
+                                    message
+                            }
+
+                        ]
+
+                    })
+
+                }
+            );
+
 
         const text =
             await response.text();
+
 
         if (!response.ok) {
 
@@ -168,16 +209,20 @@ app.post("/api/chat", async (req, res) => {
             });
         }
 
+
         const data =
             JSON.parse(text);
+
 
         const reply =
             data?.choices?.[0]?.message?.content ||
             "AI ne reply nahi diya.";
 
+
         res.json({
             reply: reply
         });
+
 
     } catch (error) {
 
@@ -195,6 +240,7 @@ app.post("/api/chat", async (req, res) => {
                 error.message
         });
     }
+
 });
 
 
@@ -208,15 +254,22 @@ app.get("/api/image", async (req, res) => {
 
         if (!hasKey(res)) return;
 
+
         const prompt =
-            String(req.query.prompt || "").trim();
+            String(
+                req.query.prompt || ""
+            ).trim();
+
 
         if (!prompt) {
 
             return res.status(400).json({
-                error: "Image prompt required"
+
+                error:
+                    "Image prompt required"
             });
         }
+
 
         console.log(
             "IMAGE REQUEST:",
@@ -225,22 +278,16 @@ app.get("/api/image", async (req, res) => {
 
 
         /*
-        Current Pollinations image endpoint.
+          Current Pollinations image API.
 
-        We use the direct image URL method
-        instead of /v1/images/generations.
-
-        This avoids problems with:
-        - unsupported image model IDs
-        - response_format
-        - b64_json/url differences
+          nanobanana-2 is a current
+          Pollinations image model.
         */
-
 
         const imageURL =
             `${POLLINATIONS}/image/` +
             encodeURIComponent(prompt) +
-            `?model=flux` +
+            `?model=nanobanana-2` +
             `&width=1024` +
             `&height=1024`;
 
@@ -252,19 +299,22 @@ app.get("/api/image", async (req, res) => {
 
 
         /*
-        Test the image request first.
+          Test generation request.
         */
 
         const response =
             await fetch(
                 imageURL,
                 {
+
                     method: "GET",
 
                     headers: {
+
                         "Authorization":
                             `Bearer ${API_KEY}`
                     }
+
                 }
             );
 
@@ -274,11 +324,13 @@ app.get("/api/image", async (req, res) => {
             const errorText =
                 await response.text();
 
+
             console.error(
                 "IMAGE ERROR:",
                 response.status,
                 errorText
             );
+
 
             return res.status(
                 response.status
@@ -297,16 +349,14 @@ app.get("/api/image", async (req, res) => {
 
 
         /*
-        We don't send the image itself
-        through Render.
-
-        We return the Pollinations URL.
+          Return URL to frontend.
         */
 
         res.json({
 
             imageUrl:
                 imageURL
+
         });
 
 
@@ -317,6 +367,7 @@ app.get("/api/image", async (req, res) => {
             error
         );
 
+
         res.status(500).json({
 
             error:
@@ -326,6 +377,7 @@ app.get("/api/image", async (req, res) => {
                 error.message
         });
     }
+
 });
 
 
@@ -339,15 +391,22 @@ app.get("/api/video", async (req, res) => {
 
         if (!hasKey(res)) return;
 
+
         const prompt =
-            String(req.query.prompt || "").trim();
+            String(
+                req.query.prompt || ""
+            ).trim();
+
 
         if (!prompt) {
 
             return res.status(400).json({
-                error: "Video prompt required"
+
+                error:
+                    "Video prompt required"
             });
         }
+
 
         console.log(
             "VIDEO REQUEST:",
@@ -356,9 +415,10 @@ app.get("/api/video", async (req, res) => {
 
 
         /*
-        Current Pollinations video endpoint.
+          Current Pollinations
+          video endpoint.
 
-        "veo" is the model ID.
+          veo = current video model.
         */
 
         const videoURL =
@@ -379,12 +439,15 @@ app.get("/api/video", async (req, res) => {
             await fetch(
                 videoURL,
                 {
+
                     method: "GET",
 
                     headers: {
+
                         "Authorization":
                             `Bearer ${API_KEY}`
                     }
+
                 }
             );
 
@@ -394,11 +457,13 @@ app.get("/api/video", async (req, res) => {
             const errorText =
                 await response.text();
 
+
             console.error(
                 "VIDEO ERROR:",
                 response.status,
                 errorText
             );
+
 
             return res.status(
                 response.status
@@ -431,7 +496,9 @@ app.get("/api/video", async (req, res) => {
         if (!buffer.length) {
 
             return res.status(500).json({
-                error: "Empty video received"
+
+                error:
+                    "Empty video received"
             });
         }
 
@@ -448,10 +515,12 @@ app.get("/api/video", async (req, res) => {
             contentType
         );
 
+
         res.setHeader(
             "Content-Length",
             buffer.length
         );
+
 
         res.setHeader(
             "Cache-Control",
@@ -469,6 +538,7 @@ app.get("/api/video", async (req, res) => {
             error
         );
 
+
         res.status(500).json({
 
             error:
@@ -478,11 +548,12 @@ app.get("/api/video", async (req, res) => {
                 error.message
         });
     }
+
 });
 
 
 /* =========================
-   START SERVER
+   START
 ========================= */
 
 app.listen(
